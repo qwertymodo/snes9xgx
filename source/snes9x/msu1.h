@@ -193,6 +193,8 @@
 #ifndef _MSU1_H_
 #define _MSU1_H_
 #include "snes9x.h"
+#include <stdint.h>
+#include <sys\stat.h>
 
 struct SMSU1
 {
@@ -212,8 +214,8 @@ enum SMSU1_FLAG {
 	Revision		= 0x02,	//max: 0x07
 	AudioResume		= 0x04,
 	AudioError		= 0x08,
-	AudioPlaying		= 0x10,
-	AudioRepeating		= 0x20,
+	AudioPlaying	= 0x10,
+	AudioRepeating	= 0x20,
 	AudioBusy		= 0x40,
 	DataBusy		= 0x80
 };
