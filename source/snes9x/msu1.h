@@ -17,12 +17,17 @@
 
   (c) Copyright 2002 - 2010  Brad Jorsch (anomie@users.sourceforge.net),
                              Nach (n-a-c-h@users.sourceforge.net),
-                             zones (kasumitokoduck@yahoo.com)
+
+  (c) Copyright 2002 - 2011  zones (kasumitokoduck@yahoo.com)
 
   (c) Copyright 2006 - 2007  nitsuja
 
-  (c) Copyright 2009 - 2010  BearOso,
+  (c) Copyright 2009 - 2016  BearOso,
                              OV2
+
+  (c) Copyright 2011 - 2016  Hans-Kristian Arntzen,
+                             Daniel De Matteis
+                             (Under no circumstances will commercial rights be given)
 
 
   BS-X C emulator code
@@ -117,6 +122,9 @@
   Sound emulator code used in 1.52+
   (c) Copyright 2004 - 2007  Shay Green (gblargg@gmail.com)
 
+  S-SMP emulator code used in 1.54+
+  (c) Copyright 2016         byuu
+
   SH assembler code partly based on x86 assembler code
   (c) Copyright 2002 - 2004  Marcus Comstedt (marcus@mc.pp.se)
 
@@ -130,7 +138,7 @@
   (c) Copyright 2006 - 2007  Shay Green
 
   GTK+ GUI code
-  (c) Copyright 2004 - 2010  BearOso
+  (c) Copyright 2004 - 2016  BearOso
 
   Win32 GUI code
   (c) Copyright 2003 - 2006  blip,
@@ -138,11 +146,19 @@
                              Matthew Kendora,
                              Nach,
                              nitsuja
-  (c) Copyright 2009 - 2010  OV2
+  (c) Copyright 2009 - 2016  OV2
 
   Mac OS GUI code
   (c) Copyright 1998 - 2001  John Stiles
-  (c) Copyright 2001 - 2010  zones
+  (c) Copyright 2001 - 2011  zones
+
+  Libretro port
+  (c) Copyright 2011 - 2016  Hans-Kristian Arntzen,
+                             Daniel De Matteis
+                             (Under no circumstances will commercial rights be given)
+
+  MSU-1 code
+  (c) Copyright 2016         qwertymodo
 
 
   Specific ports contains the works of other authors. See headers in
@@ -174,171 +190,50 @@
   Nintendo Co., Limited and its subsidiary companies.
  ***********************************************************************************/
 
-
+#ifndef _MSU1_H_
+#define _MSU1_H_
 #include "snes9x.h"
-#include "memmap.h"
-#include "dma.h"
-#include "apu/apu.h"
-#include "fxemu.h"
-#include "sdd1.h"
-#include "srtc.h"
-#include "snapshot.h"
-#include "cheats.h"
-#include "logger.h"
-#ifdef DEBUGGER
-#include "debug.h"
+
+struct SMSU1
+{
+	uint8	MSU1_STATUS;
+	uint32	MSU1_DATA_SEEK;
+	uint32	MSU1_DATA_POS;
+	uint16	MSU1_TRACK_SEEK;
+	uint16	MSU1_CURRENT_TRACK;
+	uint32	MSU1_RESUME_TRACK;
+	uint8	MSU1_VOLUME;
+	uint8	MSU1_CONTROL;
+	uint32	MSU1_AUDIO_POS;
+	uint32	MSU1_RESUME_POS;
+};
+
+enum SMSU1_FLAG {
+	Revision		= 0x02,	//max: 0x07
+	AudioResume		= 0x04,
+	AudioError		= 0x08,
+	AudioPlaying		= 0x10,
+	AudioRepeating		= 0x20,
+	AudioBusy		= 0x40,
+	DataBusy		= 0x80
+};
+
+enum SMSU1_CMD {
+	Play			= 0x01,
+	Repeat			= 0x02,
+	Resume			= 0x04
+};
+
+extern struct SMSU1	MSU1;
+
+void S9xResetMSU(void);
+void S9xMSU1Init(void);
+bool S9xMSU1ROMExists(void);
+void S9xMSU1Generate(int sample_count);
+uint8 S9xMSU1ReadPort(int port);
+void S9xMSU1WritePort(int port, uint8 byte);
+uint16 S9xMSU1Samples(void);
+void S9xMSU1SetOutput(int16 *out, int size);
+void S9xMSU1PostLoadState(void);
+
 #endif
-
-static void S9xResetCPU (void);
-static void S9xSoftResetCPU (void);
-
-
-static void S9xResetCPU (void)
-{
-	S9xSoftResetCPU();
-	Registers.SL = 0xff;
-	Registers.P.W = 0;
-	Registers.A.W = 0;
-	Registers.X.W = 0;
-	Registers.Y.W = 0;
-	SetFlags(MemoryFlag | IndexFlag | IRQ | Emulation);
-	ClearFlags(Decimal);
-}
-
-static void S9xSoftResetCPU (void)
-{
-	CPU.Cycles = 182; // Or 188. This is the cycle count just after the jump to the Reset Vector.
-	CPU.PrevCycles = -1;
-	CPU.V_Counter = 0;
-	CPU.Flags = CPU.Flags & (DEBUG_MODE_FLAG | TRACE_FLAG);
-	CPU.PCBase = NULL;
-	CPU.IRQActive = FALSE;
-	CPU.IRQPending = 0;
-	CPU.MemSpeed = SLOW_ONE_CYCLE;
-	CPU.MemSpeedx2 = SLOW_ONE_CYCLE * 2;
-	CPU.FastROMSpeed = SLOW_ONE_CYCLE;
-	CPU.InDMA = FALSE;
-	CPU.InHDMA = FALSE;
-	CPU.InDMAorHDMA = FALSE;
-	CPU.InWRAMDMAorHDMA = FALSE;
-	CPU.HDMARanInDMA = 0;
-	CPU.CurrentDMAorHDMAChannel = -1;
-	CPU.WhichEvent = HC_RENDER_EVENT;
-	CPU.NextEvent  = Timings.RenderPos;
-	CPU.WaitingForInterrupt = FALSE;
-	CPU.WaitAddress = 0xffffffff;
-	CPU.WaitCounter = 0;
-	CPU.PBPCAtOpcodeStart = 0xffffffff;
-	CPU.AutoSaveTimer = 0;
-	CPU.SRAMModified = FALSE;
-
-	Registers.PBPC = 0;
-	Registers.PB = 0;
-	Registers.PCw = S9xGetWord(0xfffc);
-	OpenBus = Registers.PCh;
-	Registers.D.W = 0;
-	Registers.DB = 0;
-	Registers.SH = 1;
-	Registers.SL -= 3;
-	Registers.XH = 0;
-	Registers.YH = 0;
-
-	ICPU.ShiftedPB = 0;
-	ICPU.ShiftedDB = 0;
-	SetFlags(MemoryFlag | IndexFlag | IRQ | Emulation);
-	ClearFlags(Decimal);
-
-	Timings.InterlaceField = FALSE;
-	Timings.H_Max = Timings.H_Max_Master;
-	Timings.V_Max = Timings.V_Max_Master;
-	Timings.NMITriggerPos = 0xffff;
-	if (Model->_5A22 == 2)
-		Timings.WRAMRefreshPos = SNES_WRAM_REFRESH_HC_v2;
-	else
-		Timings.WRAMRefreshPos = SNES_WRAM_REFRESH_HC_v1;
-
-	S9xSetPCBase(Registers.PBPC);
-
-	ICPU.S9xOpcodes = S9xOpcodesE1;
-	ICPU.S9xOpLengths = S9xOpLengthsM1X1;
-	ICPU.CPUExecuting = TRUE;
-
-	S9xUnpackStatus();
-}
-
-void S9xReset (void)
-{
-	S9xResetSaveTimer(FALSE);
-	S9xResetLogger();
-
-	memset(Memory.RAM, 0x55, 0x20000);
-	memset(Memory.VRAM, 0x00, 0x10000);
-	ZeroMemory(Memory.FillRAM, 0x8000);
-
-	if (Settings.BS)
-		S9xResetBSX();
-
-	S9xResetCPU();
-	S9xResetPPU();
-	S9xResetDMA();
-	S9xResetAPU();
-	S9xResetMSU();
-
-	if (Settings.DSP)
-		S9xResetDSP();
-	if (Settings.SuperFX)
-		S9xResetSuperFX();
-	if (Settings.SA1)
-		S9xSA1Init();
-	if (Settings.SDD1)
-		S9xResetSDD1();
-	if (Settings.SPC7110)
-		S9xResetSPC7110();
-	if (Settings.C4)
-		S9xInitC4();
-	if (Settings.OBC1)
-		S9xResetOBC1();
-	if (Settings.SRTC)
-		S9xResetSRTC();
-	if (Settings.MSU1)
-		S9xMSU1Init();
-
-	S9xInitCheatData();
-}
-
-void S9xSoftReset (void)
-{
-	S9xResetSaveTimer(FALSE);
-
-	ZeroMemory(Memory.FillRAM, 0x8000);
-
-	if (Settings.BS)
-		S9xResetBSX();
-
-	S9xSoftResetCPU();
-	S9xSoftResetPPU();
-	S9xResetDMA();
-	S9xSoftResetAPU();
-	S9xResetMSU();
-
-	if (Settings.DSP)
-		S9xResetDSP();
-	if (Settings.SuperFX)
-		S9xResetSuperFX();
-	if (Settings.SA1)
-		S9xSA1Init();
-	if (Settings.SDD1)
-		S9xResetSDD1();
-	if (Settings.SPC7110)
-		S9xResetSPC7110();
-	if (Settings.C4)
-		S9xInitC4();
-	if (Settings.OBC1)
-		S9xResetOBC1();
-	if (Settings.SRTC)
-		S9xResetSRTC();
-	if (Settings.MSU1)
-		S9xMSU1Init();
-
-	S9xInitCheatData();
-}
