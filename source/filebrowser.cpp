@@ -265,6 +265,14 @@ bool MakeFilePath(char filepath[], int type, char * filename, int filenum)
 			sprintf(temppath, "%s%s",browser.dir,browserList[browser.selIndex].filename);
 		}
 	}
+    else if(type == FILE_MSU_DATA)
+    {
+        sprintf(temppath, "%s%s.msu", browser.dir, filename);
+    }
+    else if(type == FILE_MSU_AUDIO)
+    {
+        sprintf(temppath, "%s%s-%d.pcm", browser.dir, filename, filenum);
+    }
 	else
 	{
 		if(GCSettings.SaveMethod == DEVICE_AUTO)

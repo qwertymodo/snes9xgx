@@ -192,12 +192,13 @@
 
 #include "msu1.h"
 #include "display.h"
+#include "filebrowser.h"
+#include "memmap.h"
+#include "snes9xgx.h"
 #include "apu/bapu/dsp/blargg_endian.h"
 
 #define MSU1_AUDIO_SEEK(p) REVERT_STREAM(audioFile, p, SEEK_SET)
 #define MSU1_DATA_SEEK(p) REVERT_STREAM(dataFile, p, SEEK_SET)
-
-#define APU_DEFAULT_INPUT_RATE		32000
 
 STREAM dataFile;
 STREAM audioFile;
@@ -227,11 +228,11 @@ bool AudioOpen(void)
 	MSU1.MSU1_STATUS |= AudioError;
 
 	AudioClose();
+    
+    char filepath[MAXPATHLEN];
+    MakeFilePath(filepath, FILE_MSU_AUDIO, Memory.ROMFilename, MSU1.MSU1_CURRENT_TRACK);
 
-	char ext[_MAX_EXT];
-	snprintf(ext, _MAX_EXT, "-%d.pcm", MSU1.MSU1_CURRENT_TRACK);
-
-	audioFile = OPEN_STREAM(S9xGetFilename(ext, ROMFILENAME_DIR), "rb");
+	audioFile = OPEN_STREAM(filepath, "rb");
 	if (audioFile)
 	{
 		if (GETC_STREAM(audioFile) != 'M')
@@ -272,7 +273,10 @@ bool DataOpen(void)
 	MSU1.MSU1_DATA_POS = 0;
 	MSU1.MSU1_DATA_SEEK = 0;
 
-	dataFile = OPEN_STREAM(S9xGetFilename(".msu", ROMFILENAME_DIR), "rb");
+    char filepath[MAXPATHLEN];
+    MakeFilePath(filepath, FILE_MSU_DATA, Memory.ROMFilename);
+    
+	dataFile = OPEN_STREAM(filepath, "rb");
 
 	return dataFile;
 }
@@ -304,8 +308,11 @@ void S9xMSU1Init(void)
 
 bool S9xMSU1ROMExists(void)
 {
-	struct stat buf;
-	return (stat(S9xGetFilename(".msu", ROMFILENAME_DIR), &buf) == 0);
+    char filepath[MAXPATHLEN];
+    MakeFilePath(filepath, FILE_MSU_DATA, Memory.ROMFilename);
+	
+    struct stat buf;
+	return (stat(filepath, &buf) == 0);
 }
 
 void S9xMSU1Generate(int sample_count)

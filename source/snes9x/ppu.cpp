@@ -1260,6 +1260,9 @@ uint8 S9xGetPPU (uint16 Address)
 {
 	// MAP_PPU: $2000-$3FFF
 
+    if (Settings.MSU1 && (Address & 0xfff8) == 0x2000)
+		return (S9xMSU1ReadPort(Address & 7));
+
 	if (Address < 0x2100)
 		return (OpenBus);
 
@@ -1286,9 +1289,6 @@ uint8 S9xGetPPU (uint16 Address)
 		}
 	}
 
-	if (Settings.MSU1 && (Address & 0xfff8) == 0x2000)
-		return (S9xMSU1ReadPort(Address & 7));
-	else
 	if ((Address & 0xffc0) == 0x2140) // APUIO0, APUIO1, APUIO2, APUIO3
 		// read_port will run the APU until given APU time before reading value
 		return (S9xAPUReadPort(Address & 3));
