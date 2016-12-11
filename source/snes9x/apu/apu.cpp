@@ -335,15 +335,20 @@ bool8 S9xMixSamples (uint8 *buffer, int sample_count)
 
 			if (Settings.MSU1)
 			{
-				if (msu::resampler->avail() >= sample_count)
-				{
-					uint8 *msu_sample = new uint8[sample_count * 2];
-					msu::resampler->read((short *)msu_sample, sample_count);
-					for (uint32 i = 0; i < sample_count; ++i)
-						*((int16*)(dest+(i * 2))) += *((int16*)(msu_sample+(i * 2)));
+                //while(msu::resampler->avail() < sample_count)
+                //{
+                //    S9xMSU1Generate (1);
+                //    msu::resampler->push((short *) msu::landing_buffer, S9xMSU1Samples());
+                //} 
+                if (msu::resampler->avail() >= sample_count)
+                {
+                    uint8 *msu_sample = new uint8[sample_count * 2];
+                    msu::resampler->read((short *)msu_sample, sample_count);
+                    for (int32 i = 0; i < sample_count; ++i)
+                        *((int16*)(dest+(i * 2))) += *((int16*)(msu_sample+(i * 2)));
                     
                     delete msu_sample;
-				}
+                }
 			}
 		}
 		else
@@ -456,7 +461,7 @@ void UpdatePlaybackRate (void)
 
 	if (Settings.MSU1)
 	{
-		time_ratio = 44100.0 / Settings.SoundPlaybackRate * (Settings.SoundInputRate / 32040.5);
+		time_ratio = (double) 44100 / Settings.SoundPlaybackRate;
 		msu::resampler->time_ratio(time_ratio);
 	}
 }
@@ -483,7 +488,7 @@ bool8 S9xInitSound (int buffer_ms, int lag_ms)
 	if (Settings.SixteenBitSound)
 		spc::buffer_size <<= 1;
 	//if (Settings.MSU1)
-		msu::buffer_size = ((buffer_ms * 44100 / 1000) << 2) * 441000 / 320405; // Always 16-bit, Stereo
+		msu::buffer_size = (buffer_ms * 44100 / 1000) << 2; // Always 16-bit, Stereo
 
 	printf("Sound buffer size: %d (%d samples)\n", spc::buffer_size, sample_count);
 

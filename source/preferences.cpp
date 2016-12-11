@@ -466,7 +466,7 @@ DefaultSettings ()
 	Settings.Stereo = true;
 	Settings.ReverseStereo = true;
 	Settings.SoundPlaybackRate = 32000;
-	Settings.SoundInputRate = 31953;
+	Settings.SoundInputRate = 32000;
 
 	// Graphics
 	Settings.Transparency = true;

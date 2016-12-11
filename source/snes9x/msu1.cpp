@@ -319,38 +319,44 @@ void S9xMSU1Generate(int sample_count)
 {
 	partial_samples += 441000 * sample_count;
 
-	while (((uintptr_t)bufPos < (uintptr_t)bufEnd) && (MSU1.MSU1_STATUS & AudioPlaying) && partial_samples > 320405)
+	while (((uintptr_t)bufPos < (uintptr_t)bufEnd) && partial_samples > 320000)
 	{
-		if (audioFile)
-		{
-			int16 sample;
-			if (READ_STREAM((void *)&sample, sizeof(sample), audioFile) == sizeof(sample))
-			{
-				sample = (int16)((double)(int16)GET_LE16(&sample) * (double)MSU1.MSU1_VOLUME / 255.0);
-
-				*(bufPos++) = sample;
-				MSU1.MSU1_AUDIO_POS += 2;
-				partial_samples -= 320405;
-			}
-			else
-			{
-				if (MSU1.MSU1_STATUS & AudioRepeating)
-				{
-					MSU1.MSU1_AUDIO_POS = audioLoopPos;
-					MSU1_AUDIO_SEEK(MSU1.MSU1_AUDIO_POS);
-				}
-				else
-				{
-					MSU1.MSU1_STATUS &= ~(AudioPlaying | AudioRepeating);
-					return;
-				}
-			}
-		}
-		else
-		{
-			MSU1.MSU1_STATUS &= ~(AudioPlaying | AudioRepeating);
-			return;
-		}
+        if (MSU1.MSU1_STATUS & AudioPlaying)
+        {
+            if (audioFile)
+            {
+                int16 sample;
+                if (READ_STREAM((void *)&sample, sizeof(sample), audioFile) == sizeof(sample))
+                {
+                    sample = (int16)((double)(int16)GET_LE16(&sample) * (double)MSU1.MSU1_VOLUME / 255.0);
+    
+                    *(bufPos++) = sample;
+                    MSU1.MSU1_AUDIO_POS += 2;
+                    partial_samples -= 320000;
+                }
+                else
+                {
+                    if (MSU1.MSU1_STATUS & AudioRepeating)
+                    {
+                        MSU1.MSU1_AUDIO_POS = audioLoopPos;
+                        MSU1_AUDIO_SEEK(MSU1.MSU1_AUDIO_POS);
+                    }
+                    else
+                    {
+                        MSU1.MSU1_STATUS &= ~(AudioPlaying | AudioRepeating);
+                    }
+                }
+            }
+            else
+            {
+                MSU1.MSU1_STATUS &= ~(AudioPlaying | AudioRepeating);
+            }
+        }
+        else
+        {
+            *(bufPos++) = 0.0;
+            partial_samples -= 320000;
+        }
 	}
 }
 
