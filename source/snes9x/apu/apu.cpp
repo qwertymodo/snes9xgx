@@ -188,7 +188,7 @@
 #include "linear_resampler.h"
 #include "hermite_resampler.h"
 
-#define APU_DEFAULT_INPUT_RATE		32000
+#define APU_DEFAULT_INPUT_RATE		32040
 #define APU_MINIMUM_SAMPLE_COUNT	512
 #define APU_MINIMUM_SAMPLE_BLOCK	128
 #define APU_NUMERATOR_NTSC			15664
@@ -335,11 +335,6 @@ bool8 S9xMixSamples (uint8 *buffer, int sample_count)
 
 			if (Settings.MSU1)
 			{
-                //while(msu::resampler->avail() < sample_count)
-                //{
-                //    S9xMSU1Generate (1);
-                //    msu::resampler->push((short *) msu::landing_buffer, S9xMSU1Samples());
-                //} 
                 if (msu::resampler->avail() >= sample_count)
                 {
                     uint8 *msu_sample = new uint8[sample_count * 2];
@@ -461,7 +456,7 @@ void UpdatePlaybackRate (void)
 
 	if (Settings.MSU1)
 	{
-		time_ratio = (double) 44100 / Settings.SoundPlaybackRate;
+		time_ratio = (44100.0 / Settings.SoundPlaybackRate) * (Settings.SoundInputRate / 32040.0);
 		msu::resampler->time_ratio(time_ratio);
 	}
 }
@@ -471,8 +466,8 @@ bool8 S9xInitSound (int buffer_ms, int lag_ms)
 	// buffer_ms : buffer size given in millisecond
 	// lag_ms    : allowable time-lag given in millisecond
 
-	int	sample_count     = buffer_ms * 32000 / 1000;
-	int	lag_sample_count = lag_ms    * 32000 / 1000;
+	int	sample_count     = buffer_ms * 32040 / 1000;
+	int	lag_sample_count = lag_ms    * 32040 / 1000;
 
 	spc::lag_master = lag_sample_count;
 	if (Settings.Stereo)
@@ -488,7 +483,7 @@ bool8 S9xInitSound (int buffer_ms, int lag_ms)
 	if (Settings.SixteenBitSound)
 		spc::buffer_size <<= 1;
 	//if (Settings.MSU1)
-		msu::buffer_size = (buffer_ms * 44100 / 1000) << 2; // Always 16-bit, Stereo
+		msu::buffer_size = ((buffer_ms * 44100 / 1000) * 44100 / 32040) << 2; // Always 16-bit, Stereo
 
 	printf("Sound buffer size: %d (%d samples)\n", spc::buffer_size, sample_count);
 

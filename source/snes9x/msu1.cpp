@@ -317,9 +317,9 @@ bool S9xMSU1ROMExists(void)
 
 void S9xMSU1Generate(int sample_count)
 {
-	partial_samples += 441000 * sample_count;
+	partial_samples += 44100 * sample_count;
 
-	while (((uintptr_t)bufPos < (uintptr_t)bufEnd) && partial_samples > 320000)
+	while (((uintptr_t)bufPos < (uintptr_t)bufEnd) && partial_samples > 32040)
 	{
         if (MSU1.MSU1_STATUS & AudioPlaying)
         {
@@ -332,7 +332,7 @@ void S9xMSU1Generate(int sample_count)
     
                     *(bufPos++) = sample;
                     MSU1.MSU1_AUDIO_POS += 2;
-                    partial_samples -= 320000;
+                    partial_samples -= 32040;
                 }
                 else
                 {
@@ -355,7 +355,7 @@ void S9xMSU1Generate(int sample_count)
         else
         {
             *(bufPos++) = 0.0;
-            partial_samples -= 320000;
+            partial_samples -= 32040;
         }
 	}
 }
