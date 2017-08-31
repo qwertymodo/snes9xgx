@@ -197,59 +197,115 @@
 #include "snes9xgx.h"
 #include "apu/bapu/dsp/blargg_endian.h"
 
-#define MSU1_AUDIO_SEEK(p) REVERT_STREAM(audioFile, p, SEEK_SET)
-#define MSU1_DATA_SEEK(p) REVERT_STREAM(dataFile, p, SEEK_SET)
-
-STREAM dataFile;
-STREAM audioFile;
+STREAM dataStream = NULL;
+STREAM audioStream = NULL;
 uint32 audioLoopPos;
-uint32 partial_samples;
+size_t partial_samples;
 
 // Sample buffer
 int16 *bufPos, *bufBegin, *bufEnd;
 
-void AudioClose(void)
+#ifdef UNZIP_SUPPORT
+static int unzFindExtension(unzFile &file, const char *ext, bool restart = TRUE, bool print = TRUE, bool allowExact = FALSE)
 {
-	if (audioFile)
-	{
-		CLOSE_STREAM(audioFile);
-		audioFile = NULL;
-	}
+    unz_file_info	info;
+    int				port, l = strlen(ext), e = allowExact ? 0 : 1;
 
-	bufPos = 0;
-	bufBegin = 0;
-	bufEnd = 0;
+    if (restart)
+        port = unzGoToFirstFile(file);
+    else
+        port = unzGoToNextFile(file);
 
-	partial_samples = 0;
+    while (port == UNZ_OK)
+    {
+        int		len;
+        char	name[132];
+
+        unzGetCurrentFileInfo(file, &info, name, 128, NULL, 0, NULL, 0);
+        len = strlen(name);
+
+        if (len >= l + e && strcasecmp(name + len - l, ext) == 0 && unzOpenCurrentFile(file) == UNZ_OK)
+        {
+            if (print)
+                printf("Using msu file %s", name);
+
+            return (port);
+        }
+
+        port = unzGoToNextFile(file);
+    }
+
+    return (port);
+}
+#endif
+
+STREAM S9xMSU1OpenFile(char *msu_ext)
+{
+    char filename[MAXPATHLEN];
+	sprintf(filename, "%s%s%s", browser.dir, Memory.ROMFilename, msu_ext);
+    
+    STREAM file = OPEN_STREAM(filename, "rb");
+    if (file)
+        printf("Using msu file %s.\n", filename);
+
+#ifdef UNZIP_SUPPORT
+    // look for msu file in .msu1 (Mercurial Magic pack) if not found in rom dir
+    if (!file)
+    {
+        char zip_filename[MAXPATHLEN];
+        sprintf(zip_filename, "%s%s.msu1", browser.dir, Memory.ROMFilename);
+		unzFile	unzFile = unzOpen(zip_filename);
+
+        if (unzFile)
+        {
+            int	port = unzFindExtension(unzFile, msu_ext, true, true, true);
+            if (port == UNZ_OK)
+            {
+                printf(" in %s.\n", zip_filename);
+                file = new unzStream(unzFile);
+            }
+            else
+                unzCloseCurrentFile(unzFile);
+        }
+    }
+#endif
+
+    if(!file)
+        printf("Unable to find msu file %s.\n", filename);
+
+    return file;
 }
 
-bool AudioOpen(void)
+bool AudioOpen()
 {
 	MSU1.MSU1_STATUS |= AudioError;
 
-	AudioClose();
-    
-    char filepath[MAXPATHLEN];
-    MakeFilePath(filepath, FILE_MSU_AUDIO, Memory.ROMFilename, MSU1.MSU1_CURRENT_TRACK);
+    if (audioStream)
+    {
+        CLOSE_STREAM(audioStream);
+        audioStream = NULL;
+    }
 
-	audioFile = OPEN_STREAM(filepath, "rb");
-	if (audioFile)
+	char ext[_MAX_EXT];
+	snprintf(ext, _MAX_EXT, "-%d.pcm", MSU1.MSU1_CURRENT_TRACK);
+
+    audioStream = S9xMSU1OpenFile(ext);
+	if (audioStream)
 	{
-		if (GETC_STREAM(audioFile) != 'M')
+		if (GETC_STREAM(audioStream) != 'M')
 			return false;
-		if (GETC_STREAM(audioFile) != 'S')
+		if (GETC_STREAM(audioStream) != 'S')
 			return false;
-		if (GETC_STREAM(audioFile) != 'U')
+		if (GETC_STREAM(audioStream) != 'U')
 			return false;
-		if (GETC_STREAM(audioFile) != '1')
+		if (GETC_STREAM(audioStream) != '1')
 			return false;
 
-		READ_STREAM((void *)&audioLoopPos, sizeof(audioLoopPos), audioFile);
+        READ_STREAM((char *)&audioLoopPos, 4, audioStream);
 		audioLoopPos = GET_LE32(&audioLoopPos);
 		audioLoopPos <<= 2;
 		audioLoopPos += 8;
 
-		MSU1.MSU1_AUDIO_POS = 8;
 		MSU1.MSU1_STATUS &= ~AudioError;
 		return true;
 	}
@@ -257,28 +313,20 @@ bool AudioOpen(void)
 	return false;
 }
 
-void DataClose(void)
+bool DataOpen()
 {
-	if (dataFile)
-	{
-		CLOSE_STREAM(dataFile);
-		dataFile = NULL;
-	}
-}
+    if (dataStream)
+    {
+        CLOSE_STREAM(dataStream);
+        dataStream = NULL;
+    }
 
-bool DataOpen(void)
-{
-	DataClose();
+    dataStream = S9xMSU1OpenFile(".msu");
 
-	MSU1.MSU1_DATA_POS = 0;
-	MSU1.MSU1_DATA_SEEK = 0;
+	if(!dataStream)
+		dataStream = S9xMSU1OpenFile("msu1.rom");
 
-    char filepath[MAXPATHLEN];
-    MakeFilePath(filepath, FILE_MSU_DATA, Memory.ROMFilename);
-    
-	dataFile = OPEN_STREAM(filepath, "rb");
-
-	return dataFile;
+	return dataStream != NULL;
 }
 
 void S9xResetMSU(void)
@@ -294,91 +342,128 @@ void S9xResetMSU(void)
 	MSU1.MSU1_AUDIO_POS		= 0;
 	MSU1.MSU1_RESUME_POS	= 0;
 
-	AudioClose();
-	DataClose();
+
+	bufPos				= 0;
+	bufBegin			= 0;
+	bufEnd				= 0;
+
+	partial_samples = 0;
+
+    if (dataStream)
+    {
+        CLOSE_STREAM(dataStream);
+        dataStream = NULL;
+    }
+
+    if (audioStream)
+    {
+        CLOSE_STREAM(audioStream);
+        audioStream = NULL;
+    }
 
 	Settings.MSU1 = S9xMSU1ROMExists();
 }
 
 void S9xMSU1Init(void)
 {
-	S9xResetMSU();
 	DataOpen();
 }
 
 bool S9xMSU1ROMExists(void)
 {
-    char filepath[MAXPATHLEN];
-    MakeFilePath(filepath, FILE_MSU_DATA, Memory.ROMFilename);
-	
-    struct stat buf;
-	return (stat(filepath, &buf) == 0);
+    STREAM s = S9xMSU1OpenFile(".msu");
+	if (s)
+	{
+		CLOSE_STREAM(s);
+		return true;
+	}
+#ifdef UNZIP_SUPPORT
+    char fname[MAXPATHLEN];
+	sprintf(fname, "%s%s.msu1", browser.dir, Memory.ROMFilename);
+	unzFile unzFile = unzOpen(fname);
+
+	if (unzFile)
+	{
+		unzCloseCurrentFile(unzFile);
+		return true;
+	}
+#endif
+    return false;
 }
 
-void S9xMSU1Generate(int sample_count)
+void S9xMSU1Generate(size_t sample_count)
 {
-	partial_samples += 44100 * sample_count;
+	partial_samples += 4410 * sample_count;
 
-	while (((uintptr_t)bufPos < (uintptr_t)bufEnd) && partial_samples > 32040)
+	while (((uintptr_t)bufPos < (uintptr_t)bufEnd) && partial_samples > 3204)
 	{
-        if (MSU1.MSU1_STATUS & AudioPlaying)
-        {
-            if (audioFile)
-            {
-                int16 sample;
-                if (READ_STREAM((void *)&sample, sizeof(sample), audioFile) == sizeof(sample))
-                {
-                    sample = (int16)((double)(int16)GET_LE16(&sample) * (double)MSU1.MSU1_VOLUME / 255.0);
-    
-                    *(bufPos++) = sample;
-                    MSU1.MSU1_AUDIO_POS += 2;
-                    partial_samples -= 32040;
-                }
-                else
-                {
-                    if (MSU1.MSU1_STATUS & AudioRepeating)
-                    {
-                        MSU1.MSU1_AUDIO_POS = audioLoopPos;
-                        MSU1_AUDIO_SEEK(MSU1.MSU1_AUDIO_POS);
-                    }
-                    else
-                    {
-                        MSU1.MSU1_STATUS &= ~(AudioPlaying | AudioRepeating);
-                    }
-                }
-            }
-            else
-            {
-                MSU1.MSU1_STATUS &= ~(AudioPlaying | AudioRepeating);
-            }
-        }
-        else
-        {
-            *(bufPos++) = 0.0;
-            partial_samples -= 32040;
-        }
+		if (MSU1.MSU1_STATUS & AudioPlaying && audioStream)
+		{
+			int16 sample;
+            int bytes_read = READ_STREAM((char *)&sample, 2, audioStream);
+			if (bytes_read == 2)
+			{
+				sample = (int16)((double)(int16)GET_LE16(&sample) * (double)MSU1.MSU1_VOLUME / 255.0);
+
+				*(bufPos++) = sample;
+				MSU1.MSU1_AUDIO_POS += 2;
+				partial_samples -= 3204;
+			}
+			else
+			if (bytes_read >= 0)
+			{
+				sample = (int16)((double)(int16)GET_LE16(&sample) * (double)MSU1.MSU1_VOLUME / 255.0);
+
+				*(bufPos++) = sample;
+				MSU1.MSU1_AUDIO_POS += 2;
+				partial_samples -= 3204;
+
+				if (MSU1.MSU1_STATUS & AudioRepeating)
+				{
+					MSU1.MSU1_AUDIO_POS = audioLoopPos;
+                    REVERT_STREAM(audioStream, MSU1.MSU1_AUDIO_POS, 0);
+				}
+				else
+				{
+					MSU1.MSU1_STATUS &= ~(AudioPlaying | AudioRepeating);
+                    REVERT_STREAM(audioStream, 8, 0);
+				}
+			}
+			else
+			{
+				MSU1.MSU1_STATUS &= ~(AudioPlaying | AudioRepeating);
+			}
+		}
+		else
+		{
+			MSU1.MSU1_STATUS &= ~(AudioPlaying | AudioRepeating);
+			partial_samples -= 3204;
+			*(bufPos++) = 0;
+		}
 	}
 }
 
 
-uint8 S9xMSU1ReadPort(int port)
+uint8 S9xMSU1ReadPort(uint8 port)
 {
 	switch (port)
 	{
 	case 0:
 		return MSU1.MSU1_STATUS;
 	case 1:
-	{
-		if (MSU1.MSU1_STATUS & DataBusy)
-			return 0;
-		if (!dataFile)
-			return 0;
-		int data = GETC_STREAM(dataFile);
-		if (data < 0 || data > 0xFF)
-			return 0;
-		MSU1.MSU1_DATA_POS++;
-		return data;
-	}
+    {
+        if (MSU1.MSU1_STATUS & DataBusy)
+            return 0;
+        if (!dataStream)
+            return 0;
+        int data = GETC_STREAM(dataStream);
+        if (data >= 0)
+        {
+            MSU1.MSU1_DATA_POS++;
+            return data;
+        }
+        return 0;
+    }
 	case 2:
 		return 'S';
 	case 3:
@@ -397,7 +482,7 @@ uint8 S9xMSU1ReadPort(int port)
 }
 
 
-void S9xMSU1WritePort(int port, uint8 byte)
+void S9xMSU1WritePort(uint8 port, uint8 byte)
 {
 	switch (port)
 	{
@@ -417,8 +502,10 @@ void S9xMSU1WritePort(int port, uint8 byte)
 		MSU1.MSU1_DATA_SEEK &= 0x00FFFFFF;
 		MSU1.MSU1_DATA_SEEK |= byte << 24;
 		MSU1.MSU1_DATA_POS = MSU1.MSU1_DATA_SEEK;
-		if(dataFile)
-			MSU1_DATA_SEEK(MSU1.MSU1_DATA_POS);
+        if (dataStream)
+        {
+            REVERT_STREAM(dataStream, MSU1.MSU1_DATA_POS, 0);
+        }
 		break;
 	case 4:
 		MSU1.MSU1_TRACK_SEEK &= 0xFF00;
@@ -445,7 +532,7 @@ void S9xMSU1WritePort(int port, uint8 byte)
 				MSU1.MSU1_AUDIO_POS = 8;
 			}
 
-			MSU1_AUDIO_SEEK(MSU1.MSU1_AUDIO_POS);
+            REVERT_STREAM(audioStream, MSU1.MSU1_AUDIO_POS, 0);
 		}
 		break;
 	case 6:
@@ -466,12 +553,12 @@ void S9xMSU1WritePort(int port, uint8 byte)
 	}
 }
 
-uint16 S9xMSU1Samples(void)
+size_t S9xMSU1Samples(void)
 {
 	return bufPos - bufBegin;
 }
 
-void S9xMSU1SetOutput(int16 * out, int size)
+void S9xMSU1SetOutput(int16 * out, size_t size)
 {
 	bufPos = bufBegin = out;
 	bufEnd = out + size;
@@ -479,19 +566,22 @@ void S9xMSU1SetOutput(int16 * out, int size)
 
 void S9xMSU1PostLoadState(void)
 {
-	DataOpen();
+	if (DataOpen())
+	{
+        REVERT_STREAM(dataStream, MSU1.MSU1_DATA_POS, 0);
+	}
 
 	if (MSU1.MSU1_STATUS & AudioPlaying)
 	{
 		if (AudioOpen())
 		{
-			MSU1_AUDIO_SEEK(4);
-			READ_STREAM((void *)&audioLoopPos, sizeof(audioLoopPos), audioFile);
+            REVERT_STREAM(audioStream, 4, 0);
+            READ_STREAM((char *)&audioLoopPos, 4, audioStream);
 			audioLoopPos = GET_LE32(&audioLoopPos);
 			audioLoopPos <<= 2;
 			audioLoopPos += 8;
 
-			MSU1_AUDIO_SEEK(MSU1.MSU1_AUDIO_POS);
+            REVERT_STREAM(audioStream, MSU1.MSU1_AUDIO_POS, 0);
 		}
 		else
 		{

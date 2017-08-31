@@ -244,6 +244,8 @@ namespace msu
 	static int			buffer_size;
 	static uint8		*landing_buffer = NULL;
 	static Resampler	*resampler		= NULL;
+	static int			resample_buffer_size	= -1;
+	static uint8		*resample_buffer		= NULL;
 }
 
 static void EightBitize (uint8 *, int);
@@ -314,6 +316,13 @@ bool8 S9xMixSamples (uint8 *buffer, int sample_count)
 	}
 	else
 		dest = buffer;
+    
+    if (Settings.MSU1 && msu::resample_buffer_size < (sample_count << 1))
+    {
+        delete[] msu::resample_buffer;
+        msu::resample_buffer = new uint8[sample_count << 1];
+        msu::resample_buffer_size = sample_count << 1;
+    }
 
 	if (Settings.Mute)
 	{
@@ -337,12 +346,9 @@ bool8 S9xMixSamples (uint8 *buffer, int sample_count)
 			{
                 if (msu::resampler->avail() >= sample_count)
                 {
-                    uint8 *msu_sample = new uint8[sample_count * 2];
-                    msu::resampler->read((short *)msu_sample, sample_count);
+                    msu::resampler->read((short *)msu::resample_buffer, sample_count);
                     for (int32 i = 0; i < sample_count; ++i)
-                        *((int16*)(dest+(i * 2))) += *((int16*)(msu_sample+(i * 2)));
-                    
-                    delete msu_sample;
+                        *((int16*)(dest+(i * 2))) += *((int16*)(msu::resample_buffer+(i * 2)));
                 }
 			}
 		}
@@ -410,8 +416,7 @@ void S9xFinalizeSamples (void)
 
 	spc_core->set_output((SNES_SPC::sample_t *) spc::landing_buffer, spc::buffer_size >> 1);
     
-    if (Settings.MSU1)
-		S9xMSU1SetOutput((int16 *)msu::landing_buffer, msu::buffer_size);
+    S9xMSU1SetOutput((int16 *)msu::landing_buffer, msu::buffer_size);
 }
 
 void S9xLandSamples (void)
@@ -454,11 +459,8 @@ void UpdatePlaybackRate (void)
 	double time_ratio = (double) Settings.SoundInputRate * spc::timing_hack_numerator / (Settings.SoundPlaybackRate * spc::timing_hack_denominator);
 	spc::resampler->time_ratio(time_ratio);
 
-	if (Settings.MSU1)
-	{
-		time_ratio = (44100.0 / Settings.SoundPlaybackRate) * (Settings.SoundInputRate / 32040.0);
-		msu::resampler->time_ratio(time_ratio);
-	}
+	time_ratio = (44100.0 / Settings.SoundPlaybackRate) * (Settings.SoundInputRate / 32040.0);
+	msu::resampler->time_ratio(time_ratio);
 }
 
 bool8 S9xInitSound (int buffer_ms, int lag_ms)
@@ -482,8 +484,7 @@ bool8 S9xInitSound (int buffer_ms, int lag_ms)
 		spc::buffer_size <<= 1;
 	if (Settings.SixteenBitSound)
 		spc::buffer_size <<= 1;
-	//if (Settings.MSU1)
-		msu::buffer_size = ((buffer_ms * 44100 / 1000) * 44100 / 32040) << 2; // Always 16-bit, Stereo
+	msu::buffer_size = sample_count << 2; // Always 16-bit, Stereo
 
 	printf("Sound buffer size: %d (%d samples)\n", spc::buffer_size, sample_count);
 
@@ -526,6 +527,8 @@ bool8 S9xInitSound (int buffer_ms, int lag_ms)
 		msu::resampler->resize(msu::buffer_size);
 
 	spc_core->set_output((SNES_SPC::sample_t *) spc::landing_buffer, spc::buffer_size >> 1);
+    
+    S9xMSU1SetOutput((int16 *)msu::landing_buffer, msu::buffer_size);
 
 	UpdatePlaybackRate();
 
@@ -613,6 +616,12 @@ void S9xDeinitAPU (void)
 		delete[] msu::landing_buffer;
 		msu::landing_buffer = NULL;
 	}
+
+	if (msu::resample_buffer)
+	{
+		delete[] msu::resample_buffer;
+		msu::resample_buffer = NULL;
+	}
 }
 
 static inline int S9xAPUGetClock (int32 cpucycles)
@@ -689,8 +698,8 @@ void S9xResetAPU (void)
 
 	spc::resampler->clear();
 
-	if (Settings.MSU1)
-		msu::resampler->clear();
+	S9xMSU1SetOutput((int16 *)msu::landing_buffer, msu::buffer_size);
+	msu::resampler->clear();
 }
 
 void S9xSoftResetAPU (void)
@@ -702,8 +711,8 @@ void S9xSoftResetAPU (void)
 
 	spc::resampler->clear();
 
-	if (Settings.MSU1)
-		msu::resampler->clear();
+	S9xMSU1SetOutput((int16 *)msu::landing_buffer, msu::buffer_size);
+	msu::resampler->clear();
 }
 
 static void from_apu_to_state (uint8 **buf, void *var, size_t size)
