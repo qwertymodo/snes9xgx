@@ -317,20 +317,18 @@ bool8 S9xMixSamples (uint8 *buffer, int sample_count)
 	else
 		dest = buffer;
     
-    if (Settings.MSU1 && msu::resample_buffer_size < (sample_count << 1))
+    if (Settings.MSU1 && msu::resample_buffer_size < (sample_count << 3))
     {
         delete[] msu::resample_buffer;
-        msu::resample_buffer = new uint8[sample_count << 1];
-        msu::resample_buffer_size = sample_count << 1;
+        msu::resample_buffer = new uint8[sample_count << 3];
+        msu::resample_buffer_size = sample_count << 3;
     }
 
 	if (Settings.Mute)
 	{
 		memset(dest, 0, sample_count << 1);
 		spc::resampler->clear();
-        
-        if(Settings.MSU1)
-			msu::resampler->clear();
+        msu::resampler->clear();
 
 		return (FALSE);
 	}
@@ -349,7 +347,9 @@ bool8 S9xMixSamples (uint8 *buffer, int sample_count)
                     msu::resampler->read((short *)msu::resample_buffer, sample_count);
                     for (int32 i = 0; i < sample_count; ++i)
                         *((int16*)(dest+(i * 2))) += *((int16*)(msu::resample_buffer+(i * 2)));
-                }
+				}
+				else // should never occur
+					assert(0);
 			}
 		}
 		else
@@ -389,13 +389,12 @@ int S9xGetSampleCount (void)
 
 void S9xFinalizeSamples (void)
 {
+	bool drop_current_msu1_samples = TRUE;
+
 	if (!Settings.Mute)
 	{
-        if (Settings.MSU1)
-		{
-			S9xMSU1Generate (spc_core->sample_count());
-			msu::resampler->push((short *) msu::landing_buffer, S9xMSU1Samples());
-		}
+		drop_current_msu1_samples = FALSE;
+
 		if (!spc::resampler->push((short *) spc::landing_buffer, spc_core->sample_count()))
 		{
 			/* We weren't able to process the entire buffer. Potential overrun. */
@@ -403,6 +402,24 @@ void S9xFinalizeSamples (void)
 
 			if (Settings.SoundSync && !Settings.TurboMode)
 				return;
+
+			// since we drop the current dsp samples we also want to drop generated msu1 samples
+			drop_current_msu1_samples = TRUE;
+		}
+	}
+
+	// only generate msu1 if we really consumed the dsp samples (sample_count() resets at end of function),
+	// otherwise we will generate multiple times for the same samples - so this needs to be after all early
+	// function returns
+	if (Settings.MSU1)
+	{
+		// generate the same number of msu1 samples as dsp samples were generated
+		S9xMSU1SetOutput((int16 *)msu::landing_buffer, msu::buffer_size);
+		S9xMSU1Generate(spc_core->sample_count());
+		if (!drop_current_msu1_samples && !msu::resampler->push((short *)msu::landing_buffer, S9xMSU1Samples()))
+		{
+			// should not occur, msu buffer is larger and we drop msu samples if spc buffer overruns
+			assert(0);
 		}
 	}
 
@@ -415,8 +432,6 @@ void S9xFinalizeSamples (void)
 		spc::sound_in_sync = FALSE;
 
 	spc_core->set_output((SNES_SPC::sample_t *) spc::landing_buffer, spc::buffer_size >> 1);
-    
-    S9xMSU1SetOutput((int16 *)msu::landing_buffer, msu::buffer_size);
 }
 
 void S9xLandSamples (void)
@@ -484,7 +499,7 @@ bool8 S9xInitSound (int buffer_ms, int lag_ms)
 		spc::buffer_size <<= 1;
 	if (Settings.SixteenBitSound)
 		spc::buffer_size <<= 1;
-	msu::buffer_size = sample_count << 2; // Always 16-bit, Stereo
+	msu::buffer_size = sample_count << 3; // Always 16-bit, Stereo; x2 to never overflow before dsp buffer
 
 	printf("Sound buffer size: %d (%d samples)\n", spc::buffer_size, sample_count);
 
@@ -516,7 +531,7 @@ bool8 S9xInitSound (int buffer_ms, int lag_ms)
 
 	if (!msu::resampler)
 	{
-		msu::resampler = new HermiteResampler(msu::buffer_size);
+		msu::resampler = new APU_DEFAULT_RESAMPLER(msu::buffer_size >> (Settings.SoundSync ? 0 : 1));
 		if (!msu::resampler)
 		{
 			delete[] msu::landing_buffer;
@@ -527,8 +542,6 @@ bool8 S9xInitSound (int buffer_ms, int lag_ms)
 		msu::resampler->resize(msu::buffer_size);
 
 	spc_core->set_output((SNES_SPC::sample_t *) spc::landing_buffer, spc::buffer_size >> 1);
-    
-    S9xMSU1SetOutput((int16 *)msu::landing_buffer, msu::buffer_size);
 
 	UpdatePlaybackRate();
 
@@ -697,8 +710,6 @@ void S9xResetAPU (void)
 	spc_core->set_output((SNES_SPC::sample_t *) spc::landing_buffer, spc::buffer_size >> 1);
 
 	spc::resampler->clear();
-
-	S9xMSU1SetOutput((int16 *)msu::landing_buffer, msu::buffer_size);
 	msu::resampler->clear();
 }
 
@@ -710,8 +721,6 @@ void S9xSoftResetAPU (void)
 	spc_core->set_output((SNES_SPC::sample_t *) spc::landing_buffer, spc::buffer_size >> 1);
 
 	spc::resampler->clear();
-
-	S9xMSU1SetOutput((int16 *)msu::landing_buffer, msu::buffer_size);
 	msu::resampler->clear();
 }
 
