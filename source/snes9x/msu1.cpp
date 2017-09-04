@@ -242,7 +242,7 @@ static int unzFindExtension(unzFile &file, const char *ext, bool restart = TRUE,
 STREAM S9xMSU1OpenFile(char *msu_ext)
 {
     char filename[MAXPATHLEN];
-	sprintf(filename, "%s%s%s", browser.dir, Memory.ROMFilename, msu_ext);
+	sprintf(filename, "%s%s%s", Memory.ROMFilePath, Memory.ROMFilename, msu_ext);
     
     STREAM file = OPEN_STREAM(filename, "rb");
     if (file)
@@ -253,7 +253,7 @@ STREAM S9xMSU1OpenFile(char *msu_ext)
     if (!file)
     {
         char zip_filename[MAXPATHLEN];
-        sprintf(zip_filename, "%s%s.msu1", browser.dir, Memory.ROMFilename);
+        sprintf(zip_filename, "%s%s.msu1", Memory.ROMFilePath, Memory.ROMFilename);
 		unzFile	unzFile = unzOpen(zip_filename);
 
         if (unzFile)
@@ -379,7 +379,7 @@ bool S9xMSU1ROMExists(void)
 	}
 #ifdef UNZIP_SUPPORT
     char fname[MAXPATHLEN];
-	sprintf(fname, "%s%s.msu1", browser.dir, Memory.ROMFilename);
+	sprintf(fname, "%s%s.msu1", Memory.ROMFilePath, Memory.ROMFilename);
 	unzFile unzFile = unzOpen(fname);
 
 	if (unzFile)
